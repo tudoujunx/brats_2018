@@ -4,10 +4,12 @@ import argparse
 import os
 import numpy as np
 from pro import data_load_and_parsing
+from albumentations import *
+
 
 # DIR = 'D:/program/python/test/test/image/Brats18_2013_2_1'
 train_load_dir = 'D:/program/pro_code/brats_2018/data_set/pre_data/output_train.tfrecords'
-train_load_dir = 'D:/program/python/test/BratsData/predata/output_train.tfrecords'
+test_load_dir = 'D:/program/python/test/BratsData/predata/output_train.tfrecords'
 
 TRAIN_SET_NAME = 'output_train.tfrecords'
 VALIDATION_SET_NAME = 'output_cv.tfrecords'
@@ -17,7 +19,6 @@ PREDICT_SAVED_DIRECTORY = '../data_set/predictions'
 
 INPUT_IMG_WIDE, INPUT_IMG_HEIGHT, INPUT_IMG_CHANNEL, slices = 240, 240, 4, 155
 OUTPUT_IMG_WIDE, OUTPUT_IMG_HEIGHT, OUTPUT_IMG_CHANNEL = 240, 240, 1
-EPOCH_NUM = 15
 TRAIN_BATCH_SIZE = 3
 VALIDATION_BATCH_SIZE = 1
 TEST_BATCH_SIZE = 1
@@ -26,7 +27,7 @@ EPS = 1e-6
 FLAGS = None
 CLASS_NUM = 4
 CHECK_POINT_PATH = None
-learning_rate = 1e-5
+learning_rate = 6e-6
 min_after_dequeue = 15
 
 
@@ -53,6 +54,7 @@ class Net:
         self.is_traing = None
         self.lr = None
         self.iou = None
+        self.per_class_accuracy = None
 
     def init_w(self, shape, name):
         with tf.name_scope('init_w'):
@@ -115,6 +117,7 @@ class Net:
             self.keep_prob = tf.placeholder(dtype=tf.float32, name='keep_prob')
             self.lamb = tf.placeholder(dtype=tf.float32, name='lambda')
             self.is_traing = tf.placeholder(dtype=tf.bool, name='is_training')
+
             normed_batch = self.batch_norm(x=self.input_image, is_training=self.is_traing, name='input')
 
         # layer 1
@@ -148,7 +151,7 @@ class Net:
             # dropout
             result_dropout = tf.nn.dropout(x=result_maxpool, keep_prob=self.keep_prob)
 
-            # layer 2
+        # layer 2
         with tf.name_scope('layer_2'):
             # conv_1
             self.w[3] = self.init_w(shape=[3, 3, 64, 128], name='w_3')
@@ -179,7 +182,7 @@ class Net:
             # dropout
             result_dropout = tf.nn.dropout(x=result_maxpool, keep_prob=self.keep_prob)
 
-            # layer 3
+        # layer 3
         with tf.name_scope('layer_3'):
             # conv_1
             self.w[5] = self.init_w(shape=[3, 3, 128, 256], name='w_5')
@@ -269,7 +272,7 @@ class Net:
             result_up = tf.nn.conv2d_transpose(
                 value=result_relu_2, filter=self.w[11],
                 output_shape=[batch_size, 30, 30, 512],
-                strides=[1, 2, 2, 1], padding='VALID', name='Up_Sample')
+                strides=[1, 2, 2, 1], padding='SAME', name='Up_Sample')
             normed_batch = self.batch_norm(x=result_up, is_training=self.is_traing, name='layer_5_conv_up')
             result_relu_3 = tf.nn.relu(normed_batch, name='relu_3')
             # result_relu_3 = tf.nn.relu(tf.nn.bias_add(result_up, self.b[11], name='add_bias'), name='relu_3')
@@ -277,7 +280,7 @@ class Net:
             # dropout
             result_dropout = tf.nn.dropout(x=result_relu_3, keep_prob=self.keep_prob)
 
-            # layer 6
+        # layer 6
         with tf.name_scope('layer_6'):
             # copy, crop and merge
             result_merge = self.copy_and_crop_and_merge(
@@ -311,7 +314,7 @@ class Net:
             result_up = tf.nn.conv2d_transpose(
                 value=result_relu_2, filter=self.w[14],
                 output_shape=[batch_size, 60, 60, 256],
-                strides=[1, 2, 2, 1], padding='VALID', name='Up_Sample')
+                strides=[1, 2, 2, 1], padding='SAME', name='Up_Sample')
             normed_batch = self.batch_norm(x=result_up, is_training=self.is_traing, name='layer_6_conv_up')
             result_relu_3 = tf.nn.relu(normed_batch, name='relu_3')
             # result_relu_3 = tf.nn.relu(tf.nn.bias_add(result_up, self.b[14], name='add_bias'), name='relu_3')
@@ -351,7 +354,7 @@ class Net:
             result_up = tf.nn.conv2d_transpose(
                 value=result_relu_2, filter=self.w[17],
                 output_shape=[batch_size, 120, 120, 128],
-                strides=[1, 2, 2, 1], padding='VALID', name='Up_Sample')
+                strides=[1, 2, 2, 1], padding='SAME', name='Up_Sample')
             normed_batch = self.batch_norm(x=result_up, is_training=self.is_traing, name='layer_7_conv_up')
             result_relu_3 = tf.nn.relu(normed_batch, name='relu_3')
             # result_relu_3 = tf.nn.relu(tf.nn.bias_add(result_up, self.b[17], name='add_bias'), name='relu_3')
@@ -391,7 +394,7 @@ class Net:
             result_up = tf.nn.conv2d_transpose(
                 value=result_relu_2, filter=self.w[20],
                 output_shape=[batch_size, 240, 240, 64],
-                strides=[1, 2, 2, 1], padding='VALID', name='Up_Sample')
+                strides=[1, 2, 2, 1], padding='SAME', name='Up_Sample')
             normed_batch = self.batch_norm(x=result_up, is_training=self.is_traing, name='layer_8_conv_up')
             result_relu_3 = tf.nn.relu(normed_batch, name='relu_3')
             # result_relu_3 = tf.nn.relu(tf.nn.bias_add(result_up, self.b[20], name='add_bias'), name='relu_3')
@@ -426,7 +429,7 @@ class Net:
             # result_relu_2 = tf.nn.relu(tf.nn.bias_add(result_conv_2, self.b[22], name='add_bias'), name='relu_2')
 
             # convolution to [batch_size, OUTPUT_IMG_WIDE, OUTPUT_IMG_HEIGHT, CLASS_NUM]
-            self.w[23] = self.init_w(shape=[1, 1, 64, CLASS_NUM], name='w_11')
+            self.w[23] = self.init_w(shape=[1, 1, 64, CLASS_NUM], name='w_23')
             # self.b[23] = self.init_b(shape=[CLASS_NUM], name='b_11')
             result_conv_3 = tf.nn.conv2d(
                 input=result_relu_2, filter=self.w[23],
@@ -450,13 +453,12 @@ class Net:
             #     tf.nn.softmax_cross_entropy_with_logits(labels=self.input_label, logits=self.prediction, name='loss')
 
             # not using one-hot
-
             self.loss = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=self.input_label,
                                                                        logits=self.prediction,
                                                                        name='loss')
             """
             self.loss_weight = tf.reshape(
-                tf.Variable(initial_value=[0.001, 1, 1, 1], dtype=tf.float32, name='lossweight'), [1, 1, 1, 4])
+                tf.Variable(initial_value=[0.01, 1, 1, 10], dtype=tf.float32, name='lossweight'), [1, 1, 1, 4])
             pre_softmax = tf.nn.softmax(self.prediction, axis=-1)
             label_vector = tf.reshape(self.input_label, [batch_size*INPUT_IMG_HEIGHT*INPUT_IMG_WIDE],
                                       name='labelvector')
@@ -472,6 +474,7 @@ class Net:
             tf.add_to_collection(name='loss', value=self.loss_mean)
             self.loss_all = tf.add_n(inputs=tf.get_collection(key='loss'))
 
+
         # accuracy
         with tf.name_scope('accuracy'):
             # using one-hot
@@ -483,7 +486,10 @@ class Net:
             self.correct_prediction = tf.cast(self.correct_prediction, tf.float32)
             self.accuracy = tf.reduce_mean(self.correct_prediction)
             self.iou = tf.metrics.mean_iou(labels=self.input_label, predictions=self.final_prediction,
-                                           num_classes=4, name='mean_iou')
+                                           num_classes=CLASS_NUM, name='mean_iou')
+            self.per_class_accuracy = tf.metrics.mean_per_class_accuracy(
+                labels=self.input_label, predictions=self.final_prediction, num_classes=CLASS_NUM, name='per_class_accuracy'
+            )
 
         # Gradient Descent
         with tf.name_scope('Gradient_Descent'):
@@ -493,23 +499,27 @@ class Net:
 
             self.train_step = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(self.loss_all)
 
-    def train(self):
+    def train(self, retrain=False, epoch_num=3):
         train_file_path = os.path.join(FLAGS.data_dir, TRAIN_SET_NAME)
         train_image_filename_queue = tf.train.string_input_producer(
-            string_tensor=tf.train.match_filenames_once(train_file_path), num_epochs=EPOCH_NUM, shuffle=True
+            string_tensor=tf.train.match_filenames_once(train_file_path), num_epochs=epoch_num, shuffle=True
         )
         ckpt_path = os.path.join(FLAGS.model_dir, "model.ckpt")
-        train_images, train_labels = data_load_and_parsing.parsing_data(train_image_filename_queue, TRAIN_BATCH_SIZE)
+        train_images, train_labels = data_load_and_parsing.parsing_data(train_image_filename_queue, TRAIN_BATCH_SIZE, )
         tf.summary.scalar("loss", self.loss_mean)
         # tf.summary.image("prediction", self.prediction)
         tf.summary.scalar('accuracy', self.accuracy)
         # tf.summary.scalar('learning_rate', self.LR)
         merged_summary = tf.summary.merge_all()
         all_parameters_saver = tf.train.Saver(max_to_keep=1)
+        f = open(r'D:\program\pro_code\brats_2018\data_set\jilu.txt', 'a')
+
         with tf.Session(config=tf.ConfigProto(allow_soft_placement=True, log_device_placement=True)) as sess:
             # sess = tfdbg.LocalCLIDebugWrapperSession(sess)
             sess.run(tf.global_variables_initializer())
             sess.run(tf.local_variables_initializer())
+            if retrain is True:
+                all_parameters_saver.restore(sess=sess, save_path=ckpt_path)
             summary_writer = tf.summary.FileWriter(FLAGS.tb_dir, sess.graph)
             tf.summary.FileWriter(FLAGS.model_dir, sess.graph)
             coord = tf.train.Coordinator()
@@ -525,22 +535,32 @@ class Net:
                     example_batch, label_batch = sess.run([train_images, train_labels])    # 在会话中取出image和label
                     # plt.imshow(label_batch[0, :, :, 50], origin="lower")
                     # plt.show()
+
                     print('training_step %d' % epoch)
+                    if retrain is True:
+                        print('retrain')
                     epoch += 1
+                    image_aug = np.zeros([TRAIN_BATCH_SIZE, INPUT_IMG_HEIGHT, INPUT_IMG_WIDE, INPUT_IMG_CHANNEL])
+                    label_aug = np.zeros([TRAIN_BATCH_SIZE, INPUT_IMG_HEIGHT, INPUT_IMG_WIDE])
                     for i in range(slices):
                         example = example_batch[:, :, :, :, i]
                         label = label_batch[:, :, :, i]
                         # label = tf.one_hot(label, 4)
                         # print(label)
-                        flag = 1
                         # label_weight = np.zeros(CLASS_NUM)
-                        for pix in label.flat:
-                            # label_weight[pix] += 1
-                            if pix != 0:
-                                flag = 0
-                                break
-                        if flag:
-                            continue
+                        if retrain is False:
+                            flag = 1
+                            for pix in label.flat:
+                                # label_weight[pix] += 1
+                                if pix != 0:
+                                    flag = 0
+                                    break
+                            if flag:
+                                continue
+                        for k in range(example.shape[0]):
+                            image_aug[k], label_aug[k] = data_load_and_parsing.img_aug(example[k], label[k])
+                        example = image_aug
+                        label = label_aug
                         # label_weight = label_weight[::-1]/(EPOCH_NUM*INPUT_IMG_WIDE*INPUT_IMG_HEIGHT)
                         # plt.imshow(label[0, :, :])
                         # plt.show()
@@ -581,11 +601,12 @@ class Net:
                                                          self.lamb: 0.01,
                                                          self.is_traing: True})
 """
+
                         lo, acc, summary_str, loss = sess.run(
                             [self.loss_mean, self.accuracy, merged_summary, self.loss],
                             feed_dict={
                                 self.input_image: example, self.input_label: label, self.keep_prob: 0.5,
-                                self.lamb: 0.5, self.is_traing: True}
+                                self.lamb: 1, self.is_traing: True}
                         )
                         summary_writer.add_summary(summary_str, epoch)
                         # print('num %d, loss: %.6f and accuracy: %.6f' % (epoch, lo, acc))
@@ -594,11 +615,12 @@ class Net:
                             [self.train_step],
                             feed_dict={
                                 self.input_image: example, self.input_label: label, self.keep_prob: 0.5,
-                                self.lamb: 0.5, self.is_traing: True}
+                                self.lamb: 1, self.is_traing: True}
                         )
                         h += 1
                         if h % 10 == 0:
                             print('num %d, loss: %.6f and accuracy: %.6f' % (h, lo, acc))
+                            f.write('num %d, loss: %.6f and accuracy: %.6f\r\n' % (h, lo, acc))
                     if epoch % 10 == 0:
                         all_parameters_saver.save(sess=sess, save_path=ckpt_path)
                         print('Save step %d' % epoch)
@@ -610,6 +632,7 @@ class Net:
                 coord.request_stop()
             coord.join(threads)
         print("Done training")
+        f.close()
 
     def validate(self):
         # import cv2
@@ -666,21 +689,24 @@ class Net:
                     example_batch, label_batch = sess.run([validation_images, validation_labels])  # 在会话中取出image和label
                     # print(label)
                     print('img %d' % epoch)
+                    acc_all = 0
                     for i in range(slices):
                         example = example_batch[:, :, :, :, i]
                         label = label_batch[:, :, :, i]
-                        acc, pre, iou = sess.run(
-                            [self.accuracy, self.final_prediction, self.iou],
+                        acc, pre, iou, per_acc = sess.run(
+                            [self.accuracy, self.final_prediction, self.iou, self.per_class_accuracy],
                             feed_dict={
                                 self.input_image: example, self.input_label: label, self.keep_prob: 1.0,
                                 self.lamb: 0.0, self.is_traing: False}
                         )
+                        acc_all += acc
                         h += 1
                     # summary_writer.add_summary(summary_str, epoch)
                     # print('num %d, loss: %.6f and accuracy: %.6f' % (epoch, lo, acc))
-                        if h % 1 == 0:
-                            print('num %d, accuracy: %.6f' % (h, acc))
-                            print(iou)
+
+                    print('num %d: accuracy: %.6f  iou = %.6f  per_acc = %.6f'
+                          % (epoch, acc_all/slices, iou[0], per_acc[0]))
+                    print(iou, per_acc)
                     epoch += 1
             except tf.errors.OutOfRangeError:
                 print('Done validating -- epoch limit reached')
@@ -847,14 +873,15 @@ class Net:
 
 def main():
     net = Net()
-    CHECK_POINT_PATH = os.path.join(FLAGS.model_dir + "/model.ckpt")
+    CHECK_POINT_PATH = os.path.join(FLAGS.model_dir, "model.ckpt")
     # print(CHECK_POINT_PATH)
     # net.set_up_network(TRAIN_BATCH_SIZE)
-    # net.train()
-    # net.set_up_network(VALIDATION_BATCH_SIZE)
-    # net.validate()
-    net.set_up_network(TEST_BATCH_SIZE)
-    net.test()
+    # net.train(False, 3)
+    # net.train(True, 2)
+    net.set_up_network(VALIDATION_BATCH_SIZE)
+    net.validate()
+    # net.set_up_network(TEST_BATCH_SIZE)
+    # net.test()
     # net.set_up_network(PREDICT_BATCH_SIZE)
     # net.predict()
 
@@ -863,17 +890,17 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     # 数据地址
     parser.add_argument(
-        '--data_dir', type=str, default='../data_set/pre_data',
+        '--data_dir', type=str, default=r'..\data_set\pre_data',
         help='Directory for storing input data')
 
     # 模型保存地址
     parser.add_argument(
-        '--model_dir', type=str, default='../data_set/saved_models',
+        '--model_dir', type=str, default=r'..\data_set\saved_models',
         help='output model path')
 
     # 日志保存地址
     parser.add_argument(
-        '--tb_dir', type=str, default='../data_set/logs',
+        '--tb_dir', type=str, default=r'..\data_set\logs',
         help='TensorBoard log path')
 
     FLAGS, _ = parser.parse_known_args()

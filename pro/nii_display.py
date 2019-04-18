@@ -29,8 +29,6 @@ def image_display():
         slice = cv.getTrackbarPos('slice', 'IMAGE')
         cv.imshow('IMAGE', img[:, :, slice])
         cv.waitKey(5)
-
-
     cv.destroyAllWindows()
 
 
